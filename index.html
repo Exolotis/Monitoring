@@ -922,6 +922,32 @@ tr.row-backlog { background: rgba(43,127,255,.03); }
         <p>Enforcement patterns, settlement gaps and repeat merchants</p>
       </div>
     </div>
+      <div id="home-kpis" style="width:100%;max-width:920px;position:relative;z-index:1">
+        <div style="display:flex;align-items:center;justify-content:center;gap:10px;margin-bottom:14px">
+          <span style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.1em;color:var(--muted)">Today</span>
+          <span id="hk-date" style="font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:600;color:var(--fg)"></span>
+          <span id="hk-dot" class="sync-dot idle"></span>
+          <span id="hk-status" style="font-size:11px;color:var(--muted)">loading…</span>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px">
+          <div class="stat-card" id="hk-ftr-card" style="cursor:pointer">
+            <div class="stat-icon purple"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div>
+            <div class="stat-info"><div class="stat-label">FTR Today</div><div class="stat-value" id="hk-ftr" style="color:var(--purple)">—</div><div class="stat-note">reviews logged today</div></div>
+          </div>
+          <div class="stat-card" id="hk-high-card" style="cursor:pointer">
+            <div class="stat-icon red"><svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></div>
+            <div class="stat-info"><div class="stat-label">High Backlog</div><div class="stat-value" id="hk-high" style="color:var(--danger)">—</div><div class="stat-note" id="hk-high-note">overdue, 7d cycle</div></div>
+          </div>
+          <div class="stat-card" id="hk-med-card" style="cursor:pointer">
+            <div class="stat-icon orange"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></div>
+            <div class="stat-info"><div class="stat-label">Medium Backlog</div><div class="stat-value" id="hk-med" style="color:var(--amber)">—</div><div class="stat-note" id="hk-med-note">overdue, 15d cycle</div></div>
+          </div>
+          <div class="stat-card" id="hk-low-card" style="cursor:pointer">
+            <div class="stat-icon green"><svg viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"/></svg></div>
+            <div class="stat-info"><div class="stat-label">Low Backlog</div><div class="stat-value" id="hk-low" style="color:var(--success)">—</div><div class="stat-note" id="hk-low-note">overdue, 30d cycle</div></div>
+          </div>
+        </div>
+      </div>
   </div>
 </div>
 
@@ -3786,5 +3812,83 @@ function openOgAnalytics() {
 })();
 
 </script>
+<script>
+/* ═══════ HOME KPI STRIP — today's FTR count + Ongoing backlog by flag ═══════
+   Additive only. Reads the same Supabase tables and reuses ogOverdueSeverity
+   so the numbers match what each module shows when you open it.            */
+(function(){
+ const $=id=>document.getElementById(id);
+ let last=0, busy=false;
+
+ const today=()=>{const n=new Date();
+  return n.getFullYear()+'-'+String(n.getMonth()+1).padStart(2,'0')+'-'+String(n.getDate()).padStart(2,'0')};
+
+ function stamp(){
+  const n=new Date(), M=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const el=$('hk-date'); if(el) el.textContent=n.getDate()+' '+M[n.getMonth()]+' '+n.getFullYear();
+ }
+
+ function dot(state,txt){
+  const d=$('hk-dot'), t=$('hk-status');
+  if(d) d.className='sync-dot '+state;
+  if(t&&txt!=null) t.textContent=txt;
+ }
+
+ async function pageAll(url,key,path){
+  let all=[],from=0;
+  while(true){
+   const b=await sbFetch(url,key,path,{headers:{'Range-Unit':'items','Range':from+'-'+(from+999)}});
+   if(!b||!b.length) break;
+   all=all.concat(b);
+   if(b.length<1000) break;
+   from+=1000; if(from>=10000) break;
+  }
+  return all;
+ }
+
+ async function load(){
+  if(busy) return; busy=true;
+  stamp(); dot('syncing','loading…');
+  try{
+   const d=today();
+
+   const ftr=await sbFetch(SB_URL,SB_KEY,'/rest/v1/ftr_records?select=id&date=eq.'+d);
+   $('hk-ftr').textContent=(ftr||[]).length;
+
+   const og=await pageAll(OG_URL,OG_KEY,'/rest/v1/ongoing_records?select=business_id,flag,next_review_date');
+   const recs=(og||[]).map(r=>({flag:r.flag||'',nextReview:r.next_review_date||''}));
+
+   const back=f=>recs.filter(r=>{
+    if(r.flag!==f) return false;
+    const s=ogOverdueSeverity(r);
+    return s&&(s.level==='Extreme'||s.level==='Moderate');
+   }).length;
+   const tot=f=>recs.filter(r=>r.flag===f).length;
+
+   [['high','High'],['med','Medium'],['low','Low']].forEach(([k,f])=>{
+    const b=back(f), t=tot(f);
+    $('hk-'+k).textContent=b;
+    $('hk-'+k+'-note').textContent=b+' of '+t+' overdue';
+   });
+
+   last=Date.now();
+   dot('ok','updated '+new Date().toLocaleTimeString());
+  }catch(e){
+   dot('error','could not load: '+(e.message||e).toString().slice(0,60));
+  }finally{ busy=false }
+ }
+
+ function visible(){ const e=$('module-selector'); return e && e.style.display!=='none' }
+
+ document.addEventListener('DOMContentLoaded',()=>{
+  stamp();
+  $('hk-ftr-card')?.addEventListener('click',()=>$('go-ftr-btn')?.click());
+  ['high','med','low'].forEach(k=>$('hk-'+k+'-card')?.addEventListener('click',()=>$('go-ongoing-btn')?.click()));
+  setInterval(()=>{ if(visible()&&Date.now()-last>60000) load() },3000);
+  setTimeout(()=>{ if(visible()) load() },400);
+ });
+})();
+</script>
 </body>
 </html>
+  
