@@ -913,6 +913,14 @@ tr.row-backlog { background: rgba(43,127,255,.03); }
         <h3>Ongoing Monitoring</h3>
         <p>Active merchant SLA tracking with overdue alerts</p>
       </div>
+<div class="module-card purple-card" id="go-deboard-btn" style="--mc:var(--danger)">
+        <div class="mc-badge" style="background:var(--danger-bg);color:var(--danger)">Analysis</div>
+        <div class="mc-icon" style="background:var(--danger-bg)">
+          <svg viewBox="0 0 24 24" style="stroke:var(--danger)"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        </div>
+        <h3>Deboard Analysis</h3>
+        <p>Enforcement patterns, settlement gaps and repeat merchants</p>
+      </div>
     </div>
   </div>
 </div>
@@ -1253,6 +1261,364 @@ tr.row-backlog { background: rgba(43,127,255,.03); }
     </div>
   </div>
 </div>
+
+<div id="deb-app" style="display:none;flex-direction:column;position:relative;z-index:1">
+  <header class="app-header">
+    <div class="logo">
+      <div class="icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M2 12s4-8 10-8 10 8 10 8-4 8-10 8-10-8-10-8z"/></svg></div>
+      <div class="logo-text"><div class="name">DODO SENTINEL</div><div class="sub">Deboard · Analysis</div></div>
+    </div>
+    <button class="back-btn" id="deb-back-btn">
+      <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>Back
+    </button>
+    <div class="header-center" style="flex-direction:row;gap:10px">
+      <div class="records-badge"><span>Reviews:</span><strong id="deb-total">…</strong></div>
+      <div class="live-clock-pill">
+        <div class="clock-date" id="deb-range">Loading…</div>
+        <div class="clock-time" id="deb-clock"></div>
+      </div>
+    </div>
+    <div class="header-right">
+      <select id="deb-theme-select" onchange="applyTheme(this.value)" style="padding:5px 10px;height:32px;border:1px solid var(--border);border-radius:20px;background:var(--card);color:var(--fg);font-size:12px;font-weight:500;outline:none;cursor:pointer;font-family:'Inter',sans-serif">
+        <option value="light">☀️ Light</option><option value="dark">🌙 Midnight</option>
+        <option value="amoled">⬛ AMOLED</option><option value="forest">🌿 Forest</option>
+        <option value="rose">🌸 Rose Gold</option><option value="ocean">🌊 Ocean</option>
+        <option value="sunset">🌅 Sunset</option><option value="dodo">🦤 Dodo</option>
+      </select>
+      <button class="logout-btn" id="deb-logout-btn">Log Out</button>
+    </div>
+  </header>
+
+  <div style="max-width:1600px;margin:0 auto;padding:20px 28px;width:100%">
+    <div class="sync-bar" id="deb-sync-bar">
+      <div class="sync-dot idle" id="deb-dot"></div>
+      <span id="deb-status" style="flex:1;min-width:140px">Connecting to sheet…</span>
+      <span style="font-size:11px;color:var(--muted)" id="deb-src">7. Classified Log</span>
+      <button id="deb-refresh" class="sync-action-btn">
+        <svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>Refresh
+      </button>
+      <button id="deb-export" class="sync-action-btn">⬇ Excel</button>
+    </div>
+
+    <div class="stats-bar" style="grid-template-columns:repeat(6,1fr)" id="deb-kpis"></div>
+
+    <div class="filter-bar">
+      <div class="filter-group" id="deb-tabs"></div>
+      <div class="filter-sep"></div>
+      <div class="filter-group">
+        <label>From:</label><input type="date" id="deb-d1"/>
+        <label>To:</label><input type="date" id="deb-d2"/>
+      </div>
+      <div class="filter-sep"></div>
+      <div class="filter-group">
+        <input type="text" id="deb-q" placeholder="Search ID, site, flags…" style="padding:6px 10px;border:1px solid var(--border);border-radius:7px;background:var(--card);color:var(--fg);font-size:12px;outline:none;font-family:'Inter',sans-serif;width:200px"/>
+      </div>
+      <button class="clear-btn" style="margin-left:auto" id="deb-clear">Clear all</button>
+    </div>
+
+    <div id="deb-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px"></div>
+    <div id="deb-view"></div>
+  </div>
+</div>
+
+<script>
+/* ═══════════════ DEBOARD ANALYSIS — live from Google Sheets ═══════════════ */
+(function(){
+const SHEET='1POeQJO-uwc3Vvv33GJe4JD2FHexPRLekS7t7qck7lNw', GID='493037961';
+const CSV=`https://docs.google.com/spreadsheets/d/${SHEET}/gviz/tq?tqx=out:csv&gid=${GID}`;
+const KILL='Deboard', INTERV=['RFI - Info Requested','Remediation Required','Monitor / Watchlist','Warning Issued','Escalate - Further Research'];
+let RAW=[], F={}, TAB='overview', CH={}, clockT=null;
+
+const $=id=>document.getElementById(id);
+const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const uniq=a=>[...new Set(a)];
+function cLine(l){const r=[];let c='',q=false;for(let i=0;i<l.length;i++){const ch=l[i];
+ if(ch==='"'){if(q&&l[i+1]==='"'){c+='"';i++}else q=!q}else if(ch===','&&!q){r.push(c);c=''}else c+=ch}r.push(c);return r}
+function parse(t){
+ const rows=[];let cur='',q=false,line=[];
+ for(let i=0;i<t.length;i++){const c=t[i];
+  if(c==='"'){if(q&&t[i+1]==='"'){cur+='"';i++}else q=!q}
+  else if(c===','&&!q){line.push(cur);cur=''}
+  else if((c==='\n')&&!q){line.push(cur);rows.push(line);line=[];cur=''}
+  else if(c==='\r'&&!q){}
+  else cur+=c}
+ if(cur||line.length){line.push(cur);rows.push(line)}
+ return rows.filter(r=>r.length>1);
+}
+function normDate(s){
+ s=String(s||'').trim(); if(!s) return '';
+ let m=s.match(/^(\d{4})-(\d{2})-(\d{2})/); if(m) return m[0];
+ m=s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/); if(m) return `${m[3]}-${String(m[1]).padStart(2,'0')}-${String(m[2]).padStart(2,'0')}`;
+ const d=new Date(s); return isNaN(d)?'':d.toISOString().slice(0,10);
+}
+function dot(st,txt){const d=$('deb-dot'),t=$('deb-status'); if(d)d.className='sync-dot '+st; if(t&&txt!=null)t.textContent=txt}
+
+async function load(){
+ dot('syncing','Reading 7. Classified Log…');
+ try{
+  const r=await fetch(CSV+'&_='+Date.now()); if(!r.ok) throw new Error('HTTP '+r.status);
+  const rows=parse(await r.text()); if(rows.length<2) throw new Error('Sheet empty or not shared');
+  const H=rows[0].map(h=>h.replace(/^"|"$/g,'').trim().toLowerCase());
+  const ix=n=>H.findIndex(h=>h.startsWith(n));
+  const c={dt:ix('date'),bid:ix('business id'),web:ix('website'),flag:ix('red flag'),
+    par:ix('reason - parent'),sub:ix('reason - sub'),fai:ix('faith'),dec:ix('decision'),
+    set:ix('settlement'),pen:ix('penalty'),act:ix('action status'),app:ix('approval'),com:ix('comm'),nt:ix('notes')};
+  RAW=rows.slice(1).map(r=>{const g=i=>i>=0?String(r[i]||'').replace(/^"|"$/g,'').trim():'';
+   return{dt:normDate(g(c.dt)),bid:g(c.bid),web:g(c.web),flag:g(c.flag),par:g(c.par)||'Not Recorded',
+    sub:g(c.sub)||'Reason Not Recorded',fai:g(c.fai)||'Not Assessed',dec:g(c.dec),set:g(c.set)||'Not Recorded',
+    pen:g(c.pen)||'No Fine',act:g(c.act),app:g(c.app),com:g(c.com),nt:g(c.nt)}})
+   .filter(x=>x.bid||x.dec);
+  const ds=RAW.map(r=>r.dt).filter(Boolean).sort();
+  $('deb-total').textContent=RAW.length;
+  $('deb-range').textContent=ds.length?fmt(ds[0])+' → '+fmt(ds[ds.length-1]):'no dates';
+  dot('ok','Loaded '+RAW.length+' reviews · '+new Date().toLocaleTimeString());
+  render();
+ }catch(e){dot('error','Load failed: '+e.message+' — make sure the sheet is shared as "Anyone with the link"');
+  $('deb-view').innerHTML=`<div class="empty-state"><h3>Could not read the sheet</h3><p>${esc(e.message)}</p><p style="margin-top:8px">Open the sheet, Share, set to "Anyone with the link · Viewer". Or use the Apps Script fallback.</p></div>`}
+}
+
+const M=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function fmt(d){if(!d)return '—';const p=d.split('-');return `${M[+p[1]-1]} ${+p[2]}, ${p[0]}`}
+function mkey(d){return d?d.slice(0,7):''}
+
+function rows(){
+ const d1=$('deb-d1').value,d2=$('deb-d2').value,q=($('deb-q').value||'').toLowerCase();
+ return RAW.filter(r=>{
+  if(d1&&r.dt&&r.dt<d1)return false; if(d2&&r.dt&&r.dt>d2)return false;
+  for(const k in F){if(F[k]&&r[k]!==F[k])return false}
+  if(q&&!(r.bid+' '+r.web+' '+r.flag+' '+r.nt+' '+r.sub).toLowerCase().includes(q))return false;
+  return true});
+}
+function tally(a,k){const m={};a.forEach(r=>{m[r[k]]=(m[r[k]]||0)+1});return Object.entries(m).sort((x,y)=>y[1]-x[1])}
+function setF(k,v){F[k]=F[k]===v?'':v;render()}
+window.debSetF=setF;
+
+function C(){const dk=['dark','amoled','forest','rose','ocean','sunset','dodo'].includes(document.documentElement.getAttribute('data-theme'));
+ const s=getComputedStyle(document.documentElement);
+ return{dk,grid:dk?'rgba(255,255,255,.06)':'rgba(0,0,0,.06)',txt:s.getPropertyValue('--muted').trim(),
+  red:s.getPropertyValue('--danger').trim(),amb:s.getPropertyValue('--amber').trim(),
+  grn:s.getPropertyValue('--success').trim(),pur:s.getPropertyValue('--purple').trim(),blu:s.getPropertyValue('--blue').trim()}}
+
+const TABS=[['overview','Overview'],['reason','Reason Mix'],['settle','Settlement'],['life','Lifecycle & Repeat'],['dq','Data Quality'],['cases','Case Explorer']];
+
+function render(){
+ const d=rows();
+ $('deb-tabs').innerHTML=TABS.map(([k,l])=>`<button class="btn ${TAB===k?'btn-primary':'btn-outline'}" style="height:30px;padding:5px 12px;font-size:11px" onclick="debTab('${k}')">${l}</button>`).join('');
+ const kills=d.filter(r=>r.dec===KILL).length, iv=d.filter(r=>INTERV.includes(r.dec)).length;
+ const nr=d.filter(r=>r.set==='Not Recorded').length, fine=d.filter(r=>r.pen==='Fine Applied').length;
+ const bids={};d.forEach(r=>bids[r.bid]=(bids[r.bid]||0)+1);
+ const rep=Object.values(bids).filter(v=>v>1).length;
+ const kpi=[['Reviews',d.length,'purple','rows after filters'],['True kills',kills,'red','Decision = Deboard only'],
+  ['Intervention',(d.length?(iv/d.length*100).toFixed(1):0)+'%','blue','RFI, remediation, monitor, warning, escalate'],
+  ['Settlement gap',nr,'orange','Settlement not recorded'],['Fines applied',fine,'green','no amounts exist in source'],
+  ['Repeat merchants',rep,'grey','business IDs seen more than once']];
+ $('deb-kpis').innerHTML=kpi.map(([l,v,c,t])=>`<div class="stat-card" title="${t}"><div class="stat-icon ${c}"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/></svg></div><div class="stat-info"><div class="stat-label">${l}</div><div class="stat-value" style="font-size:22px">${v}</div><div class="stat-note">${t}</div></div></div>`).join('');
+ $('deb-chips').innerHTML=Object.entries(F).filter(([,v])=>v).map(([k,v])=>`<span class="pill pill-purple" style="cursor:pointer" onclick="debSetF('${k}','${esc(v)}')">${esc(v)} ✕</span>`).join('');
+ Object.values(CH).forEach(c=>{try{c.destroy()}catch(e){}}); CH={};
+ ({overview:vOverview,reason:vReason,settle:vSettle,life:vLife,dq:vDQ,cases:vCases}[TAB])(d);
+}
+window.debTab=k=>{TAB=k;render()};
+
+function card(t,sub,body,full){return `<div class="chart-card${full?' full-width':''}"><h3>${t}</h3>${sub?`<p class="chart-sub">${sub}</p>`:''}${body}</div>`}
+function grid(h,cols){return `<div class="analytics-body" style="padding:0;grid-template-columns:${cols||'1fr 1fr'}">${h}</div>`}
+function bars(list,total,key,col){
+ return `<div style="display:flex;flex-direction:column;gap:7px">`+list.map(([k,v])=>{
+  const p=total?Math.round(v/total*100):0;
+  return `<div style="cursor:pointer" onclick="debSetF('${key}','${esc(k)}')">
+   <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px"><span>${esc(k)}</span><span style="font-family:'JetBrains Mono',monospace;font-weight:700">${v} <span style="color:var(--muted);font-weight:400">${p}%</span></span></div>
+   <div style="height:7px;background:var(--card);border-radius:4px;overflow:hidden"><div style="height:100%;width:${p}%;background:${col||'var(--purple)'};border-radius:4px"></div></div></div>`}).join('')+`</div>`}
+
+function monthly(d){
+ const m={};d.forEach(r=>{const k=mkey(r.dt);if(!k)return;if(!m[k])m[k]={t:0,k:0};m[k].t++;if(r.dec===KILL)m[k].k++});
+ const ks=Object.keys(m).sort();
+ return{ks,lab:ks.map(k=>M[+k.slice(5)-1]+' '+k.slice(0,4)),tot:ks.map(k=>m[k].t-m[k].k),kil:ks.map(k=>m[k].k)};
+}
+
+function vOverview(d){
+ const mo=monthly(d),c=C();
+ $('deb-view').innerHTML=grid(
+  card('📅 Reviews by month','Deboards shaded red. Bar label is the month the review was logged.','<div style="height:230px"><canvas id="dc1"></canvas></div>',true)+
+  card('🏷 Reason category',tally(d,'par').length+' categories · click to filter',bars(tally(d,'par'),d.length,'par','var(--purple)'))+
+  card('⚖️ Decision','Click any decision to filter every panel',bars(tally(d,'dec'),d.length,'dec','var(--danger)'))+
+  card('💰 Settlement','Amber rows are the recording gap',bars(tally(d,'set'),d.length,'set','var(--amber)'))+
+  card('🤝 Faith','Only tagged where the log said so explicitly',bars(tally(d,'fai'),d.length,'fai','var(--blue)'))
+ );
+ CH.c1=new Chart($('dc1'),{type:'bar',data:{labels:mo.lab,datasets:[
+  {label:'Deboard',data:mo.kil,backgroundColor:c.red+'CC',borderRadius:4,stack:'s'},
+  {label:'Other outcome',data:mo.tot,backgroundColor:c.grn+'99',borderRadius:4,stack:'s'}]},
+  options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
+   plugins:{legend:{labels:{color:c.txt,font:{family:'Inter',size:11},boxWidth:10}}},
+   scales:{x:{ticks:{color:c.txt,font:{size:10}},grid:{color:c.grid},stacked:true},
+           y:{ticks:{color:c.txt,font:{size:10}},grid:{color:c.grid},stacked:true,beginAtZero:true}}}});
+}
+
+function vReason(d){
+ const par=tally(d,'par'),sub=tally(d,'sub');
+ const prop=sub.map(([k,v])=>{const kk=d.filter(r=>r.sub===k&&r.dec===KILL).length;return[k,v,kk,Math.round(kk/v*100)]})
+   .sort((a,b)=>b[3]-a[3]||b[1]-a[1]);
+ $('deb-view').innerHTML=grid(
+  card('🎯 Kill propensity by sub reason','Kills divided by reviews. 100% means it is effectively an automatic termination and a candidate for a rule.',
+   `<div style="max-height:520px;overflow-y:auto"><table style="width:100%;border-collapse:collapse">
+    <thead><tr><th style="padding:7px 10px;text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);border-bottom:1px solid var(--border)">Sub reason</th>
+    <th style="padding:7px 10px;text-align:right;font-size:10px;color:var(--muted);border-bottom:1px solid var(--border)">Rev</th>
+    <th style="padding:7px 10px;text-align:right;font-size:10px;color:var(--muted);border-bottom:1px solid var(--border)">Kills</th>
+    <th style="padding:7px 10px;text-align:left;font-size:10px;color:var(--muted);border-bottom:1px solid var(--border);width:130px">Propensity</th></tr></thead>
+    <tbody>${prop.map(([k,v,kk,p])=>`<tr style="border-bottom:1px solid var(--border);cursor:pointer" onclick="debSetF('sub','${esc(k)}')">
+     <td style="padding:7px 10px;font-size:12px">${esc(k)}${p===100?' <span class="pill pill-red" style="font-size:9px;padding:1px 7px">auto</span>':''}</td>
+     <td style="padding:7px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px">${v}</td>
+     <td style="padding:7px 10px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--danger)">${kk}</td>
+     <td style="padding:7px 10px"><div style="height:6px;background:var(--card);border-radius:4px"><div style="height:100%;width:${p}%;background:${p===100?'var(--danger)':'var(--amber)'};border-radius:4px"></div></div>
+     <span style="font-size:10px;color:var(--muted)">${p}%</span></td></tr>`).join('')}</tbody></table></div>`,true)+
+  card('📂 Parent categories','Click to filter',bars(par,d.length,'par','var(--purple)'),true)
+ );
+}
+
+function vSettle(d){
+ const set=tally(d,'set'),par=uniq(d.map(r=>r.par)),cols=uniq(d.map(r=>r.set));
+ const gap=d.filter(r=>r.set==='Not Recorded');
+ const mx=Math.max(1,...par.map(p=>Math.max(...cols.map(s=>d.filter(r=>r.par===p&&r.set===s).length))));
+ $('deb-view').innerHTML=grid(
+  card('⚠️ The recording gap',`${gap.length} of ${d.length} reviews never recorded what happened to the balance. ${gap.filter(r=>r.pen==='Fine Applied').length} of those had a fine applied. No fine amounts exist in the source, so monetary recovery cannot be reported.`,
+   bars(set,d.length,'set','var(--amber)'),true)+
+  card('🔥 Reason × Settlement','Is the same offence type settled consistently',
+   `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11px">
+    <thead><tr><th style="padding:6px;text-align:left;color:var(--muted);font-size:10px"></th>${cols.map(s=>`<th style="padding:6px;color:var(--muted);font-size:9px;text-align:center">${esc(s)}</th>`).join('')}</tr></thead>
+    <tbody>${par.map(p=>`<tr><td style="padding:6px;font-size:11px;white-space:nowrap">${esc(p)}</td>${cols.map(s=>{
+      const n=d.filter(r=>r.par===p&&r.set===s).length;
+      return `<td style="padding:6px;text-align:center;font-family:'JetBrains Mono',monospace;background:rgba(192,57,43,${(n/mx*0.55).toFixed(2)});border-radius:4px">${n||''}</td>`}).join('')}</tr>`).join('')}</tbody></table></div>`,true)+
+  card('📋 Backfill queue','Fine cases first. These are the rows to go back and complete.',
+   `<div style="max-height:340px;overflow-y:auto"><table style="width:100%;border-collapse:collapse">
+     <tbody>${gap.sort((a,b)=>(b.pen==='Fine Applied')-(a.pen==='Fine Applied')).slice(0,200).map(r=>
+      `<tr style="border-bottom:1px solid var(--border)"><td style="padding:6px 10px;font-size:11px;color:var(--muted);white-space:nowrap">${fmt(r.dt)}</td>
+       <td style="padding:6px 10px;font-family:'JetBrains Mono',monospace;font-size:10.5px;word-break:break-all">${esc(r.bid)}</td>
+       <td style="padding:6px 10px;font-size:11px">${esc(r.sub)}</td>
+       <td style="padding:6px 10px">${r.pen==='Fine Applied'?'<span class="pill pill-red">Fine</span>':''}</td></tr>`).join('')}</tbody></table></div>`,true)
+ );
+}
+
+function vLife(d){
+ const by={};d.forEach(r=>{(by[r.bid]=by[r.bid]||[]).push(r)});
+ const rep=Object.entries(by).filter(([,v])=>v.length>1).sort((a,b)=>b[1].length-a[1].length);
+ const esc2=[];
+ rep.forEach(([b,v])=>{const s=[...v].sort((x,y)=>x.dt.localeCompare(y.dt));
+  if(s[0].dec!==KILL&&s[s.length-1].dec===KILL&&s[0].dt&&s[s.length-1].dt)
+   esc2.push([b,s[0].dec,s[0].dt,s[s.length-1].dt,Math.round((new Date(s[s.length-1].dt)-new Date(s[0].dt))/864e5)])});
+ esc2.sort((a,b)=>b[4]-a[4]);
+ const mxd=Math.max(1,...esc2.map(e=>e[4]));
+ const silent=d.filter(r=>r.com==='No Response'||r.sub==='No RFI Response');
+ $('deb-view').innerHTML=grid(
+  card('⏱ Escalation chains',`${esc2.length} merchants where a softer decision later became a deboard. Bar length is days elapsed.`,
+   esc2.length?`<div style="display:flex;flex-direction:column;gap:9px">`+esc2.map(([b,d0,t0,t1,n])=>
+    `<div><div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px">
+      <span style="font-family:'JetBrains Mono',monospace">${esc(b)}</span>
+      <span style="color:var(--muted)">${esc(d0)} · ${fmt(t0)} → ${fmt(t1)}</span></div>
+     <div style="display:flex;align-items:center;gap:8px"><div style="flex:1;height:8px;background:var(--card);border-radius:4px"><div style="height:100%;width:${Math.round(n/mxd*100)}%;background:${n>60?'var(--danger)':'var(--amber)'};border-radius:4px"></div></div>
+     <span style="font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:${n>60?'var(--danger)':'var(--fg)'};min-width:52px;text-align:right">${n}d</span></div></div>`).join('')+`</div>`
+    :'<div style="color:var(--muted);font-size:13px;padding:20px;text-align:center">No escalation chains in this slice</div>',true)+
+  card('🔇 Silence driven enforcement',`${silent.length} reviews closed on no response rather than gathered evidence. That is ${d.length?Math.round(silent.length/d.length*100):0}% of this slice.`,
+   bars(tally(silent,'par'),silent.length,'par','var(--amber)'))+
+  card('🔁 Repeat merchants',`${rep.length} business IDs appear more than once`,
+   `<div class="repeat-list">${rep.slice(0,40).map(([b,v])=>
+    `<div class="repeat-item"><div class="ri-bid">${esc(b)}<div style="font-weight:400;color:var(--muted);font-size:10px;margin-top:3px">${v.map(x=>fmt(x.dt)+' · '+x.dec).join(' → ')}</div></div><div class="ri-count">${v.length}×</div></div>`).join('')}</div>`)
+ );
+}
+
+function vDQ(d){
+ const dates=d.map(r=>r.dt).filter(Boolean);
+ const y25=d.filter(r=>r.dt.startsWith('2025')).length;
+ const items=[['Settlement not recorded',d.filter(r=>r.set==='Not Recorded').length,'Blocks any recovery reporting'],
+  ['Fine applied with no amount',d.filter(r=>r.pen==='Fine Applied').length,'No fine amount column exists in the source'],
+  ['No website or reference',d.filter(r=>!r.web).length,'Cannot re-verify the finding later'],
+  ['Reason not recorded',d.filter(r=>r.par==='Not Recorded').length,'Row excluded from every reason trend'],
+  ['Dated 2025',y25,'Likely a year typo, everything else is 2026'],
+  ['No date at all',d.filter(r=>!r.dt).length,'Excluded from all time series'],
+  ['Faith not assessed',d.filter(r=>r.fai==='Not Assessed').length,'Good faith vs bad faith comparison is thin'],
+  ['Comm status blank or not sent',d.filter(r=>!r.com||r.com==='Not Sent').length,'Cannot confirm the merchant was told']];
+ $('deb-view').innerHTML=grid(
+  card('🧪 Data quality scorecard','Count, and what fixing it would unlock',
+   `<table style="width:100%;border-collapse:collapse">${items.map(([l,n,w])=>
+    `<tr style="border-bottom:1px solid var(--border)"><td style="padding:10px 8px;font-size:12.5px">${l}<div style="font-size:10.5px;color:var(--muted);margin-top:2px">${w}</div></td>
+     <td style="padding:10px 8px;text-align:right;font-family:'JetBrains Mono',monospace;font-size:18px;font-weight:700;color:${n>50?'var(--danger)':n>10?'var(--amber)':'var(--success)'}">${n}</td>
+     <td style="padding:10px 8px;text-align:right;font-size:11px;color:var(--muted);width:50px">${d.length?Math.round(n/d.length*100):0}%</td></tr>`).join('')}</table>`,true)+
+  card('📆 Date coverage','',`<div style="font-size:13px;line-height:2">
+    Earliest review: <strong style="font-family:'JetBrains Mono',monospace">${dates.length?fmt(dates.slice().sort()[0]):'—'}</strong><br>
+    Latest review: <strong style="font-family:'JetBrains Mono',monospace">${dates.length?fmt(dates.slice().sort().pop()):'—'}</strong><br>
+    Distinct months: <strong style="font-family:'JetBrains Mono',monospace">${uniq(dates.map(mkey)).length}</strong><br>
+    Rows with a usable date: <strong style="font-family:'JetBrains Mono',monospace">${dates.length} of ${d.length}</strong></div>`)+
+  card('📊 Approval status','',bars(tally(d,'app'),d.length,'app','var(--blue)'))
+ );
+}
+
+function vCases(d){
+ const s=[...d].sort((a,b)=>(b.dt||'').localeCompare(a.dt||''));
+ $('deb-view').innerHTML=`<div class="table-wrap"><div class="table-scroll" style="max-height:calc(100vh - 430px)">
+  <table><thead><tr><th>Date</th><th>Business ID</th><th>Reason</th><th>Decision</th><th>Settlement</th><th>Penalty</th><th>Red flags</th></tr></thead>
+  <tbody>${s.slice(0,600).map((r,i)=>`<tr style="cursor:pointer" onclick="debCase(${RAW.indexOf(r)})">
+   <td style="white-space:nowrap;font-size:12px">${fmt(r.dt)}</td>
+   <td class="mono" style="font-size:11px">${esc(r.bid)}</td>
+   <td style="font-size:12px">${esc(r.sub)}</td>
+   <td>${r.dec===KILL?`<span class="pill pill-esc">${esc(r.dec)}</span>`:`<span class="pill pill-na">${esc(r.dec)}</span>`}</td>
+   <td><span class="pill ${r.set==='Not Recorded'?'pill-amber':'pill-grey'}">${esc(r.set)}</span></td>
+   <td>${r.pen==='Fine Applied'?'<span class="pill pill-red">Fine</span>':'<span style="color:var(--muted);font-size:11px">—</span>'}</td>
+   <td style="font-size:11px;color:var(--muted);max-width:320px;white-space:pre-wrap">${esc(r.flag).slice(0,150)}</td></tr>`).join('')}</tbody></table></div>
+  <div class="row-count-bar"><span>Showing ${Math.min(600,s.length)} of ${s.length}</span><span>click a row for the full record</span></div></div>`;
+}
+
+window.debCase=i=>{
+ const r=RAW[i];if(!r)return;
+ const sib=RAW.filter(x=>x.bid===r.bid);
+ const f=[['Date',fmt(r.dt)],['Business ID',r.bid],['Website / Ref',r.web||'—'],['Red flags',r.flag||'—'],
+  ['Reason',r.par+' › '+r.sub],['Faith',r.fai],['Decision',r.dec],['Settlement',r.set],['Penalty',r.pen],
+  ['Action status',r.act||'—'],['Approval (RG)',r.app||'—'],['Comm status',r.com||'—'],['Notes',r.nt||'—']];
+ const m=document.createElement('div');
+ m.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:3000;display:flex;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(6px)';
+ m.innerHTML=`<div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);width:100%;max-width:640px;max-height:86vh;overflow-y:auto;box-shadow:var(--shadow-lg)">
+  <div style="padding:20px 26px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:flex-start">
+   <div><div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;font-weight:600">Case record</div>
+   <div style="font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;word-break:break-all;margin-top:4px">${esc(r.bid)}</div></div>
+   <button class="panel-close-btn" onclick="this.closest('div[style*=fixed]').remove()">×</button></div>
+  <div style="padding:20px 26px">${f.map(([k,v])=>`<div style="margin-bottom:13px">
+   <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px">${k}</div>
+   <div style="font-size:13px;white-space:pre-wrap">${esc(v)}</div></div>`).join('')}
+   ${sib.length>1?`<div style="border-top:1px solid var(--border);padding-top:14px;margin-top:6px">
+    <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Other reviews of this merchant (${sib.length-1})</div>
+    ${sib.filter(x=>x!==r).map(x=>`<div style="font-size:12px;padding:6px 0;color:var(--muted)">${fmt(x.dt)} · ${esc(x.dec)} · ${esc(x.sub)}</div>`).join('')}</div>`:''}
+  </div></div>`;
+ m.addEventListener('click',e=>{if(e.target===m)m.remove()});
+ document.body.appendChild(m);
+};
+
+function open_(){
+ ['login-screen','module-selector','ftr-app','ongoing-app'].forEach(s=>{const e=$(s);if(e)e.style.display='none'});
+ $('deb-app').style.display='flex';
+ const t=document.documentElement.getAttribute('data-theme')||'light';
+ $('deb-theme-select').value=t;
+ if(!RAW.length)load();
+ clearInterval(clockT);
+ const tick=()=>{const n=new Date();$('deb-clock').textContent=String(n.getHours()).padStart(2,'0')+':'+String(n.getMinutes()).padStart(2,'0')+':'+String(n.getSeconds()).padStart(2,'0')};
+ tick();clockT=setInterval(tick,1000);
+}
+
+document.addEventListener('DOMContentLoaded',()=>{
+ $('go-deboard-btn')?.addEventListener('click',open_);
+ $('deb-back-btn')?.addEventListener('click',()=>{clearInterval(clockT);$('deb-app').style.display='none';showScreen('module-selector')});
+ $('deb-logout-btn')?.addEventListener('click',()=>{sessionStorage.removeItem('dodo-auth');location.reload()});
+ $('deb-refresh')?.addEventListener('click',load);
+ ['deb-d1','deb-d2'].forEach(i=>$(i)?.addEventListener('change',render));
+ $('deb-q')?.addEventListener('input',render);
+ $('deb-clear')?.addEventListener('click',()=>{F={};$('deb-d1').value='';$('deb-d2').value='';$('deb-q').value='';render()});
+ $('deb-export')?.addEventListener('click',()=>{
+  const d=rows();if(!d.length)return;
+  const ws=XLSX.utils.json_to_sheet(d.map(r=>({Date:r.dt,'Business ID':r.bid,'Website / Ref':r.web,'Red Flags':r.flag,
+   'Reason - Parent':r.par,'Reason - Sub':r.sub,Faith:r.fai,Decision:r.dec,Settlement:r.set,Penalty:r.pen,
+   'Action Status':r.act,'Approval (RG)':r.app,'Comm Status':r.com,Notes:r.nt})));
+  const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Deboard Analysis');
+  XLSX.writeFile(wb,`deboard-analysis-${new Date().toISOString().slice(0,10)}.xlsx`);});
+ new MutationObserver(()=>{if($('deb-app')?.style.display==='flex'&&RAW.length)render()})
+  .observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
+});
+})();
+</script>
 
 <canvas id="dodo-space-canvas"></canvas>
 <div class="toast-container" id="toasts"></div>
